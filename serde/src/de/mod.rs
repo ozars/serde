@@ -1132,6 +1132,15 @@ pub trait Deserializer<'de>: Sized {
     where
         V: Visitor<'de>;
 
+    /// Hint that the `Deserialize` type is expecting a contextful value.
+    fn deserialize_context<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        let _ = visitor;
+        Err(Error::custom("contextful values are not supported"))
+    }
+
     /// Hint that the `Deserialize` type is expecting the name of a struct
     /// field or the discriminant of an enum variant.
     fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -1670,6 +1679,15 @@ pub trait Visitor<'de>: Sized {
         Err(Error::invalid_type(Unexpected::Enum, &self))
     }
 
+    /// The input data contains a contextful value.
+    fn visit_context<A>(self, context: A) -> Result<Self::Value, A::Error>
+    where
+        A: ContextAccess<'de>,
+    {
+        let _ = context;
+        Err(Error::invalid_type(Unexpected::Other("contextful value"), &self))
+    }
+
     // Used when deserializing a flattened Option field. Not public API.
     #[doc(hidden)]
     fn __private_visit_untagged_option<D>(self, _: D) -> Result<Self::Value, ()>
@@ -1951,6 +1969,55 @@ where
     #[inline]
     fn size_hint(&self) -> Option<usize> {
         (**self).size_hint()
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+/// Provides a `Visitor` access to value along with the corresponding context in the input.
+///
+/// This is a trait that a `Deserializer` passes to a `Visitor` implementation.
+///
+/// # Lifetime
+///
+/// The `'de` lifetime of this trait is the lifetime of data that may be
+/// borrowed by deserialized inner value. See the page [Understanding
+/// deserializer lifetimes] for a more detailed explanation of these lifetimes.
+///
+/// [Understanding deserializer lifetimes]: https://serde.rs/lifetimes.html
+pub trait ContextAccess<'de> {
+    /// The error type that can be returned if some error occurs during
+    /// deserialization.
+    type Error: Error;
+
+    /// This returns `Ok(span)` for the value being deserialized.
+    ///
+    /// The span corresponds to [start byte offset, end byte offset) in the input by convention.
+    fn span(&mut self) -> Result<Range<usize>, Self::Error>;
+
+    /// This returns `Ok(value)` corresponing to the value being deserialized.
+    fn inner_value<V>(&mut self) -> Result<V, Self::Error>
+    where
+        V: Deserialize<'de>;
+}
+
+impl<'de, 'a, A> ContextAccess<'de> for &'a mut A
+where
+    A: ?Sized + ContextAccess<'de>,
+{
+    type Error = A::Error;
+
+    #[inline]
+    fn span(&mut self) -> Result<Range<usize>, Self::Error> {
+        (**self).span()
+    }
+
+    #[inline]
+    fn inner_value<V>(&mut self) -> Result<V, Self::Error>
+    where
+        V: Deserialize<'de>,
+    {
+        (**self).inner_value()
     }
 }
 
